@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+.vs/
+# Never commit game files
+ref/
+*Assembly-CSharp*.dll
