@@ -3,7 +3,7 @@
   <ID>container_window_finder</ID>
   <Name>Container Window Finder</Name>
   <Author>Charles</Author>
-  <ModVersion>1.1.0</ModVersion>
+  <ModVersion>1.2.0</ModVersion>
   <Description>Hover a container item to briefly highlight its open window (z-order unchanged). Single-click it to highlight and bring that window to the front.</Description>
   <GameVersions>
     <Version>1.0.0</Version>

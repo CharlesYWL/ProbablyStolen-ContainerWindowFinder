@@ -15,10 +15,7 @@ namespace ContainerWindowFinder
     {
         // ---- tuning ----
         private const float HoverDelay = 0.12f;      // cursor must rest on the item this long before the hover flash
-        private const float HoverDuration = 1.5f;
-        private const float ClickDuration = 1.8f;
-        private const float HoverPeakAlpha = 0.75f;
-        private const float ClickPeakAlpha = 1.0f;
+        private const float FadeIn = 0.08f;          // quick ease-in so the glow does not pop
         private const float BorderPx = 3f;
         private const float XrayThickness = 1f;   // x-ray dashed border: thin so it stays subtle
         private const float XrayDash = 6f;
@@ -26,8 +23,6 @@ namespace ContainerWindowFinder
         private const float XrayAlpha = 0.7f;      // relative to the main highlight
         private const float FillAlpha = 0.22f;       // multiplied by the current fade alpha
         private const float DefaultClickSlop = 6f;   // px, used when ItemMouseDragHandler.dragThreshold is unknown
-        private static readonly Color HoverColor = new Color(0.35f, 0.85f, 1f);   // cyan
-        private static readonly Color ClickColor = new Color(1f, 0.85f, 0.2f);    // amber
 
         private enum Kind { Hover, Click }
 
@@ -40,9 +35,10 @@ namespace ContainerWindowFinder
             public Image fill;
             public Image[] edges;
             public float start;
-            public float duration;
-            public float peak;
             public Color color;
+            public GameItem source;      // container whose hover keeps this glow alive
+            public bool held;
+            public float releasedAt;
             public bool triedBackground;
             public RectTransform background;
             // X-ray dashed border, drawn on our own top-most overlay canvas so it shows through
@@ -102,7 +98,7 @@ namespace ContainerWindowFinder
                     if (w != null)
                     {
                         w.ToFront();
-                        Flash(w, Kind.Click);
+                        Flash(w, Kind.Click, item);
                     }
                 }
                 Animate();
@@ -154,7 +150,7 @@ namespace ContainerWindowFinder
             {
                 hoverFired = hoverCandidate;
                 PixelWindow w = VisibleWindowOf(hoverCandidate);
-                if (w != null) Flash(w, Kind.Hover);
+                if (w != null) Flash(w, Kind.Hover, hoverCandidate);
             }
             if (hovered == null) hoverFired = null;
 
@@ -213,36 +209,38 @@ namespace ContainerWindowFinder
 
         // ------------------------------------------------------------------ highlights
 
-        private void Flash(PixelWindow window, Kind kind)
+        private void Flash(PixelWindow window, Kind kind, GameItem source)
         {
-            // At most one highlight per kind; a new one of the same kind replaces the old (different) window's.
-            for (int i = active.Count - 1; i >= 0; i--)
-            {
-                Highlight h = active[i];
-                if (h.window != window && h.kind == kind) Remove(i);
-            }
-
             Highlight existing = null;
             foreach (Highlight h in active)
             {
                 if (h.window == window) { existing = h; break; }
             }
 
-            // A hover never downgrades a running click highlight on the same window.
-            if (existing != null && existing.kind == Kind.Click && kind == Kind.Hover) return;
+            // A hover never downgrades a click highlight that is still showing on the same window.
+            if (existing != null && existing.kind == Kind.Click && kind == Kind.Hover)
+            {
+                existing.source = source;
+                existing.held = true;
+                return;
+            }
 
             if (existing == null)
             {
                 existing = Create(window);
                 if (existing == null) return;
                 active.Add(existing);
+                existing.start = Time.unscaledTime;
+            }
+            else if (!existing.held)
+            {
+                existing.start = Time.unscaledTime - FadeIn;   // re-hovered while fading: no dip
             }
 
             existing.kind = kind;
-            existing.start = Time.unscaledTime;
-            existing.duration = kind == Kind.Click ? ClickDuration : HoverDuration;
-            existing.peak = kind == Kind.Click ? ClickPeakAlpha : HoverPeakAlpha;
-            existing.color = kind == Kind.Click ? ClickColor : HoverColor;
+            existing.source = source;
+            existing.held = true;
+            existing.color = kind == Kind.Click ? Settings.ClickColor : Settings.HoverColor;
         }
 
         private Highlight Create(PixelWindow window)
@@ -357,30 +355,50 @@ namespace ContainerWindowFinder
                     Remove(i);
                     continue;
                 }
-                float t = (now - h.start) / h.duration;
-                if (t >= 1f)
+                // Glow stays while the mouse (or a dragged item) is on its container,
+                // then fades over the configured time (0 = disappears immediately).
+                if (h.held && h.source != hoverCandidate && h.source != dragWindowFired)
                 {
-                    Remove(i);
-                    continue;
+                    h.held = false;
+                    h.releasedAt = now;
                 }
+                float a;
+                if (h.held)
+                {
+                    a = Mathf.Clamp01((now - h.start) / FadeIn);
+                }
+                else
+                {
+                    float fade = Settings.FadeOut;
+                    float t = fade <= 0.001f ? 1f : (now - h.releasedAt) / fade;
+                    if (t >= 1f)
+                    {
+                        Remove(i);
+                        continue;
+                    }
+                    a = 1f - Mathf.SmoothStep(0f, 1f, t);
+                }
+                a *= Settings.Opacity;
 
                 // Keep on top *inside* the window (window's own sibling index is never touched)
                 // and follow resizes.
                 if (h.rect.GetSiblingIndex() != h.rect.parent.childCount - 1) h.rect.SetAsLastSibling();
                 FitToWindow(h);
 
-                // quick pulse in the first 25%, then ease-out fade
-                float a;
-                if (t < 0.25f) a = 0.6f + 0.4f * Mathf.Abs(Mathf.Sin(t / 0.25f * Mathf.PI * 1.5f));
-                else a = 1f - Mathf.SmoothStep(0f, 1f, (t - 0.25f) / 0.75f);
-                a *= h.peak;
-
                 Color edge = h.color; edge.a = a;
-                Color fill = h.color; fill.a = a * FillAlpha;
+                Color fill = h.color; fill.a = Settings.Fill ? a * FillAlpha : 0f;
                 h.fill.color = fill;
                 for (int e = 0; e < h.edges.Length; e++) h.edges[e].color = edge;
-                Color xr = edge; xr.a *= XrayAlpha;
-                UpdateXray(h, xr);
+                if (Settings.Xray)
+                {
+                    if (h.xray != null && !h.xray.gameObject.activeSelf) h.xray.gameObject.SetActive(true);
+                    Color xr = edge; xr.a *= XrayAlpha;
+                    UpdateXray(h, xr);
+                }
+                else if (h.xray != null && h.xray.gameObject.activeSelf)
+                {
+                    h.xray.gameObject.SetActive(false);
+                }
             }
         }
 
@@ -474,11 +492,12 @@ namespace ContainerWindowFinder
                     if (target == carried || (target != null && target.isDebugMenu)) target = null;
                 }
             }
+            if (!Settings.DragHighlight) target = null;
             if (target != null && target != dragWindowFired)
             {
                 dragWindowFired = target;
                 PixelWindow w = VisibleWindowOf(target);
-                if (w != null) Flash(w, Kind.Hover);
+                if (w != null) Flash(w, Kind.Hover, target);
             }
             if (target == null) dragWindowFired = null;
         }

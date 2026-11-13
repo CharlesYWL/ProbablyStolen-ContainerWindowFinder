@@ -12,6 +12,7 @@ namespace ContainerWindowFinder
         public void Init(ModManifest manifest)
         {
             Log = new ModLog(manifest);
+            Settings.Define(manifest.ID);
         }
 
         public void OnEnable()
