@@ -68,6 +68,9 @@ namespace ContainerWindowFinder
 
         private bool loggedError;
 
+        // drag over an open container -> flash its window
+        private GameItem dragWindowFired;
+
         private void Update()
         {
             try
@@ -136,6 +139,7 @@ namespace ContainerWindowFinder
 
             bool dragging = ItemMouseDragHandler.current != null && ItemMouseDragHandler.current.IsDraggingItem;
             Vector2 mouse = Input.mousePosition;
+            TickDrag(dragging, mouse);
             GameItem hovered = dragging ? null : RenderHandler.RaycastElement<GameItem>(mouse);
             if (hovered != null && hovered.isDebugMenu) hovered = null;
 
@@ -454,9 +458,35 @@ namespace ContainerWindowFinder
             return used;
         }
 
+        // ------------------------------------------------------------------ drag target
+
+        private void TickDrag(bool dragging, Vector2 mouse)
+        {
+            // Carrying an item over a container whose window is open: flash that window.
+            // The game already outlines drop targets itself, so nothing is drawn on the item.
+            GameItem target = null;
+            if (dragging)
+            {
+                GameItemElement carried = ModReflect.Get<GameItemElement>(ItemMouseDragHandler.current, "currentItem");
+                if (carried != null)
+                {
+                    target = RenderHandler.RaycastElement<GameItem>(mouse, carried.fakeBackground);
+                    if (target == carried || (target != null && target.isDebugMenu)) target = null;
+                }
+            }
+            if (target != null && target != dragWindowFired)
+            {
+                dragWindowFired = target;
+                PixelWindow w = VisibleWindowOf(target);
+                if (w != null) Flash(w, Kind.Hover);
+            }
+            if (target == null) dragWindowFired = null;
+        }
+
         private void ClearAll()
         {
             for (int i = active.Count - 1; i >= 0; i--) Remove(i);
+            dragWindowFired = null;
             ResetInput();
         }
     }
